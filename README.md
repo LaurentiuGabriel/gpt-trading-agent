@@ -66,6 +66,7 @@ Your default web browser will automatically open a new tab with the running appl
 
 ## How to Use the App
 The application has two main sections, accessible from the sidebar navigation:
+![alt text](image.png)
 
 ### Chat
 This is the main interactive page. You can use natural language to ask the AI analyst to perform tasks. Try prompts like:
