@@ -61,7 +61,7 @@ def get_financials(ticker):
     
     url = f"https://www.quantiq.live/api/get-market-data/{ticker}"
 
-    payload = 'apiKey=9e4a6403556810dfb25afa5211f7be21d8a8c954d10d8734086b28b79609c3f7'
+    payload = f"apiKey={QUANTIQ_API_KEY}"
     headers = {
         'Content-Type': 'application/x-www-form-urlencoded'
     }
@@ -286,3 +286,89 @@ elif page == "Portfolio Performance":
         
         daily_value = chart_data.set_index('date').resample('D')['value_change'].sum().cumsum()
         st.area_chart(daily_value)
+
+        # --- Charting Individual Stock Prices ---
+        st.subheader("Individual Stock Price Evolution")
+        
+        tickers = portfolio_df['ticker'].unique().tolist()
+        start_date = pd.to_datetime(portfolio_df['date']).min()
+        end_date = datetime.now()
+
+        if tickers:
+            with st.spinner("Loading historical price data..."):
+                try:
+                    # Download historical data for all tickers at once
+                    historical_data = yf.download(tickers, start=start_date, end=end_date)
+                    print(historical_data)
+                    
+                    if not historical_data.empty:
+                        # Select the 'Adj Close' prices
+                        adj_close_prices = historical_data['Close']
+                        
+                        # yfinance might return a Series if only one ticker is present and valid
+                        if isinstance(adj_close_prices, pd.Series):
+                            adj_close_prices = adj_close_prices.to_frame(name=tickers[0])
+                        
+                        # Remove columns that are all NaN (for tickers that might not have data for the full range)
+                        adj_close_prices.dropna(axis=1, how='all', inplace=True)
+                        
+                        if not adj_close_prices.empty:
+                            st.line_chart(adj_close_prices)
+                        else:
+                            st.warning("Could not retrieve historical price data to plot.")
+                    else:
+                        st.warning("Could not retrieve historical price data for the tickers in your portfolio.")
+                except Exception as e:
+                    st.error(f"An error occurred while fetching historical data: {e}")
+                    
+
+            st.subheader("Overall Portfolio Performance")
+            st.markdown("---") # Adds a horizontal line for visual separation
+
+            try:
+   
+                total_cost_basis = (portfolio_df['shares'] * portfolio_df['price']).sum()
+
+                latest_prices = adj_close_prices.iloc[-1]
+
+   
+                total_shares_per_ticker = portfolio_df.groupby('ticker')['shares'].sum()
+    
+
+                total_current_value = (total_shares_per_ticker * latest_prices).sum()
+
+    
+                total_pnl = total_current_value - total_cost_basis
+    
+ 
+                if total_cost_basis > 0:
+                    percentage_pnl = (total_pnl / total_cost_basis) * 100
+                else:
+                    percentage_pnl = 0.0
+
+    # 6. Display the key performance indicators (KPIs) in columns.
+                col1, col2, col3 = st.columns(3)
+
+                col1.metric(
+                    label="Total Portfolio Value 💰",
+                    value=f"${total_current_value:,.2f}"
+                )
+    
+
+                col2.metric(
+                    label="Total Gain / Loss 📈",
+                    value=f"${total_pnl:,.2f}",
+                    delta=f"{percentage_pnl:.2f}%"
+                )
+
+                col3.metric(
+                    label="Total Amount Invested 🏦",
+                    value=f"${total_cost_basis:,.2f}"
+                )
+                st.markdown("---") # Adds another horizontal line
+
+            except Exception as e:
+                st.warning(f"Could not calculate portfolio performance. It's possible that price data for a ticker is missing. Error: {e}")
+
+            st.subheader("Individual Stock Price Evolution")
+            st.line_chart(adj_close_prices)
