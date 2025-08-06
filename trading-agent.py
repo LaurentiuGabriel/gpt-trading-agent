@@ -36,7 +36,7 @@ def get_small_cap_stocks():
         "Content-Type": "application/json",
     }
     payload = {
-        "model": "sonar-small-online",
+        "model": "sonar-pro",
         "messages": [
             {"role": "system", "content": "You are an AI assistant that provides lists of stock tickers."},
             {"role": "user", "content": "Please provide a list of 10 interesting US micro-cap or small-cap stock tickers. Just provide the tickers, separated by commas."},
