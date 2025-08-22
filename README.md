@@ -42,6 +42,12 @@ OPENAI_API_KEY: Get this from your OpenAI Platform account.
 
 QUANTIQ_API: This is the API key from QuantiQ.live.
 
+ALPACA_API_KEY: This is the API key from Alpaca trading platform
+
+ALPACA_SECRET_KEY: This is the secret key from Alpaca that enables you to perform real trades
+
+ALPACA_PAPER: Switch between the paper (virtual money) or the real Alpaca API
+
 3. Install Dependencies
 - Open a terminal or command prompt.
 
