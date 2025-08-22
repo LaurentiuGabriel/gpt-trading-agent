@@ -1,5 +1,3 @@
-# stock_picker_app.py
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -8,6 +6,7 @@ import yfinance as yf
 import os
 from datetime import datetime
 from dotenv import load_dotenv
+import alpaca_trade_api as tradeapi
 
 # --- Configuration ---
 # Make sure to set these as environment variables for security
@@ -15,6 +14,10 @@ load_dotenv()
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 QUANTIQ_API_KEY = os.environ.get("QUANTIQ_API")
+ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY")
+ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY")
+# Use paper trading by default, change to "false" in .env for live
+ALPACA_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 
 # Set up OpenAI client
 openai.api_key = OPENAI_API_KEY
@@ -172,6 +175,33 @@ def update_portfolio(ticker, action, shares, price):
     else:
         portfolio_df = new_trade
     portfolio_df.to_csv(PORTFOLIO_CSV, index=False)
+    
+def book_trade_alpaca(api, ticker, shares, action):
+    """
+    Books a trade with a market order through the Alpaca API.
+    Returns (success_boolean, message_or_order_object).
+    """
+    if not api:
+        return False, "Alpaca API client is not initialized. Check your API keys."
+
+    if action.upper() in ["BUY"]:
+        side = 'buy'
+    elif action.upper() in ["SELL", "SHORT"]:
+        side = 'sell'
+    else:
+        return False, f"Invalid action: {action}"
+
+    try:
+        order = api.submit_order(
+            symbol=ticker,
+            qty=shares,
+            side=side,
+            type='market',
+            time_in_force='day'  
+        )
+        return True, order
+    except Exception as e:
+        return False, str(e)
 
 def get_current_price(ticker):
     """
@@ -195,6 +225,17 @@ def get_current_price(ticker):
 
 st.set_page_config(page_title="AI Stock Picker", layout="wide")
 st.title("AI-Powered Stock Picking Assistant")
+
+if ALPACA_API_KEY and ALPACA_SECRET_KEY and "YOUR" not in ALPACA_API_KEY:
+    try:
+        base_url = "https://paper-api.alpaca.markets" if ALPACA_PAPER else "https://api.alpaca.markets"
+        alpaca_api = tradeapi.REST(ALPACA_API_KEY, ALPACA_SECRET_KEY, base_url, api_version='v2')
+        account = alpaca_api.get_account()
+        st.sidebar.success(f"✅ Alpaca Connected ({'Paper' if ALPACA_PAPER else 'Live'})")
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Alpaca connection failed: {e}")
+else:
+    st.sidebar.warning("🔑 Alpaca keys not found. Trade booking is disabled.")
 
 # --- Initialize Session State ---
 if "messages" not in st.session_state:
@@ -225,14 +266,28 @@ if page == "Chat":
             if st.button(f"Execute {action} for {ticker}", key=f"execute_{ticker}_{action}"):
                 with st.spinner(f"Executing {action} for {ticker}..."):
                     price = get_current_price(ticker)
+                    shares_to_trade = 10
                     if price:
                         # For simplicity, assuming 100 shares per trade
                         update_portfolio(ticker, action, 100, price)
                         success_message = f"Trade executed: {action} 100 shares of {ticker} at ${price:.2f}."
-                        st.success(success_message)
-                        st.session_state.messages.append({"role": "assistant", "content": success_message})
+                        success, message = book_trade_alpaca(alpaca_api, ticker, shares_to_trade, action)
+                        if success:
+                            order_details = message
+                            # Get price for logging, actual fill price is in order_details from Alpaca
+                            price_for_log = get_current_price(ticker)
+                            if price_for_log:
+                             # Log the trade to our local CSV *after* successful submission
+                                success_msg = f"✅ **Alpaca trade submitted!** {action} {shares_to_trade} shares of {ticker}. Order ID: `{order_details.id}`."
+                                st.success(success_msg)
+                                st.session_state.messages.append({"role": "assistant", "content": success_msg})
+                            else:
+                                st.error("Alpaca order submitted, but failed to fetch price for local portfolio log.")
                     else:
-                        st.error("Could not execute trade due to price fetch error.")
+                        # If Alpaca trade fails
+                        error_msg = f"❌ **Alpaca trade failed:** {message}"
+                        st.error(error_msg)
+                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
                 
                 # Clear the recommendation to remove the button and prevent re-execution
                 st.session_state.actionable_recommendation = None
