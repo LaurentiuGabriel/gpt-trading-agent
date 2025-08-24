@@ -1,5 +1,7 @@
 # AI-Powered Stock Picking Assistant
-This Streamlit application is an interactive, AI-powered tool designed to assist with stock market investment decisions. It leverages multiple AI and data APIs to find small-cap stocks, provide analysis and recommendations, and track the performance of a simulated portfolio.
+I was just curious if AI can hallucinate where the market is going, ignoring the twitter threads saying that they made 10 million USD using ChatGPT. And this is how I created this project.
+
+This application uses Perplexity, GPT-5, QuantiQ.live and Alpaca to find small-cap stocks, provide analysis and recommendations, book orders on these stocks and track the performance of the portfolio.
 
 ## Features
 - AI-Driven Stock Discovery: Uses the Perplexity AI API to find interesting micro and small-cap US stocks.
