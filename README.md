@@ -12,7 +12,7 @@ This application uses Perplexity, GPT-5, QuantiQ.live and Alpaca to find small-c
 
 - Interactive Chat Interface: A user-friendly chat allows you to request stock ideas and analysis.
 
-- One-Click Trading: Execute recommended trades directly from the chat interface.
+- One-Click Trading: Execute recommended trades directly from the chat interface. Trades are executed through the Alpaca API.
 
 - Portfolio Tracking: A dedicated page to view your complete trade history, current holdings, and overall portfolio performance, including value over time.
 
