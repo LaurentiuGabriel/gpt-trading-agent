@@ -1,5 +1,7 @@
-# AI-Powered Stock Picking Assistant
-This Streamlit application is an interactive, AI-powered tool designed to assist with stock market investment decisions. It leverages multiple AI and data APIs to find small-cap stocks, provide analysis and recommendations, and track the performance of a simulated portfolio.
+# AI-Powered Trading Agent
+I was just curious if AI can hallucinate where the market is going.
+
+This application uses Perplexity, GPT-5, QuantiQ.live and Alpaca to find small-cap stocks, provide analysis and recommendations, book orders on these stocks and track the performance of the portfolio. I also added Streamlit for a better user experience. 
 
 ## Features
 - AI-Driven Stock Discovery: Uses the Perplexity AI API to find interesting micro and small-cap US stocks.
@@ -10,11 +12,13 @@ This Streamlit application is an interactive, AI-powered tool designed to assist
 
 - Interactive Chat Interface: A user-friendly chat allows you to request stock ideas and analysis.
 
-- One-Click Trading: Execute recommended trades directly from the chat interface.
+- One-Click Trading: Execute recommended trades directly from the chat interface. Trades are executed through the Alpaca API.
 
 - Portfolio Tracking: A dedicated page to view your complete trade history, current holdings, and overall portfolio performance, including value over time.
 
 - Persistent Portfolio: All trades are saved to a local portfolio.csv file, so your data is preserved between sessions.
+
+- Congress trades on specific stocks can be performed through the QuantiQ API.  
 
 ## Getting Started
 Follow these instructions to get the application running on your local machine.
@@ -41,6 +45,12 @@ PERPLEXITY_API_KEY: Get this from your Perplexity AI account.
 OPENAI_API_KEY: Get this from your OpenAI Platform account.
 
 QUANTIQ_API: This is the API key from QuantiQ.live.
+
+ALPACA_API_KEY: This is the API key from Alpaca trading platform
+
+ALPACA_SECRET_KEY: This is the secret key from Alpaca that enables you to perform real trades
+
+ALPACA_PAPER: Switch between the paper (virtual money) or the real Alpaca API
 
 3. Install Dependencies
 - Open a terminal or command prompt.
@@ -76,6 +86,8 @@ This is the main interactive page. You can use natural language to ask the AI an
 - "analyze AAPL": The assistant will fetch financial data for the specified ticker (e.g., AAPL), use GPT-4o to analyze it, and provide a recommendation. If the recommendation is actionable (BUY, SELL, SHORT), a button will appear to execute the trade.
 
 - "sell AAPL": If you have a position in the specified ticker, the assistant will ask for confirmation and provide a button to execute the sale.
+
+- "check house and senate trades for {ticker}" - shows all the trades done by Congress officials for that stock.  
 
 ### Portfolio Performance
 This page provides a comprehensive overview of your investment activities. It includes:
