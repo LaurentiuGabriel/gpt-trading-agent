@@ -106,6 +106,10 @@ This page provides a comprehensive overview of your investment activities. It in
 - Portfolio Value Over Time: An area chart visualizing the growth of your portfolio's value since your first trade.
 
 This project is free for everyone. If you'd wish to donate, use the following button:
-☕ <script 
-  src="https://www.paypal.com/sdk/js?client-id=BAAIgidNhUa-aGWoH5fIc_p1o9TSdqcEildVdGcD-bgIxuU_1OQLzEWwxTq3SPTS_IqywutqzXfydL9feM&components=hosted-buttons&disable-funding=venmo&currency=EUR">
+☕
+<div id="paypal-container-Y8ZFC3QY42PPC"></div>
+<script>
+  paypal.HostedButtons({
+    hostedButtonId: "Y8ZFC3QY42PPC",
+  }).render("#paypal-container-Y8ZFC3QY42PPC")
 </script>
