@@ -7,6 +7,10 @@ import os
 from datetime import datetime
 from dotenv import load_dotenv
 import alpaca_trade_api as tradeapi
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # --- Configuration ---
 # Make sure to set these as environment variables for security
@@ -56,6 +60,91 @@ def get_small_cap_stocks():
         st.error(f"Error fetching from Perplexity API: {e}")
         return []
     
+    
+def get_government_official_trades(ticker):
+    """
+    Uses the QuantiQ.live API to get trades done by House and Senate officials on the supplied ticker.
+    """
+    url = f"https://www.quantiq.live/api/get-congress-trades?simbol={ticker}"
+
+    payload = f"apiKey={QUANTIQ_API_KEY}"
+    headers = {
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+
+    response = requests.request("POST", url, headers=headers, data=payload)
+    data = response.json()
+    try:
+        if 'data' in data and 'data' in data['data']:
+            data['data']['data'].pop('history', None)
+    except Exception as e:
+        # Silently fail if history key doesn't exist
+        pass
+
+    return data
+
+def plot_technicals(df, ticker):
+    """
+    Generates a professional financial chart with technical indicators using Plotly.
+    """
+    # 1. Create a figure with subplots
+    # We need 4 rows: 1 for price, 1 for volume, 1 for RSI, 1 for MACD
+    fig = make_subplots(
+        rows=4, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        subplot_titles=(f'{ticker} Price', 'Volume', 'RSI', 'MACD'),
+        row_heights=[0.5, 0.1, 0.2, 0.2] # Give more space to the main price chart
+    )
+
+    # 2. Add the Candlestick chart for price
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df['open'],
+        high=df['high'],
+        low=df['low'],
+        close=df['close'],
+        name="Price"
+    ), row=1, col=1)
+
+    # 3. Add Overlays to the price chart (Moving Averages & Bollinger Bands)
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], mode='lines', name='SMA 20', line=dict(color='yellow', width=1)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['EMA_50'], mode='lines', name='EMA 50', line=dict(color='purple', width=1)), row=1, col=1)
+    # Bollinger Bands
+    fig.add_trace(go.Scatter(x=df.index, y=df['BBU_20_2.0'], mode='lines', name='Upper BB', line=dict(color='cyan', width=1, dash='dash')), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['BBL_20_2.0'], mode='lines', name='Lower BB', line=dict(color='cyan', width=1, dash='dash'), fill='tonexty', fillcolor='rgba(0, 176, 246, 0.1)'), row=1, col=1)
+
+    # 4. Add the Volume chart
+    # Color bars red for down days and green for up days
+    colors = ['green' if row['close'] >= row['open'] else 'red' for index, row in df.iterrows()]
+    fig.add_trace(go.Bar(x=df.index, y=df['volume'], name='Volume', marker_color=colors), row=2, col=1)
+
+    # 5. Add the RSI chart
+    fig.add_trace(go.Scatter(x=df.index, y=df['RSI_14'], mode='lines', name='RSI', line=dict(color='orange', width=2)), row=3, col=1)
+    # Add overbought/oversold lines for RSI
+    fig.add_hline(y=70, line_dash="dash", line_color="red", row=3, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="green", row=3, col=1)
+
+    # 6. Add the MACD chart
+    fig.add_trace(go.Scatter(x=df.index, y=df['MACD_12_26_9'], mode='lines', name='MACD', line=dict(color='blue', width=2)), row=4, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['MACDs_12_26_9'], mode='lines', name='Signal', line=dict(color='red', width=1)), row=4, col=1)
+    # Color histogram based on positive or negative values
+    macd_colors = ['green' if val >= 0 else 'red' for val in df['MACDh_12_26_9']]
+    fig.add_trace(go.Bar(x=df.index, y=df['MACDh_12_26_9'], name='Histogram', marker_color=macd_colors), row=4, col=1)
+
+    # 7. Update the layout for a clean look
+    fig.update_layout(
+        title=f'{ticker} Technical Analysis',
+        height=800,
+        showlegend=True,
+        xaxis_rangeslider_visible=False, # Hide the main range slider
+        template='plotly_dark' # Use a dark theme
+    )
+    # Hide the range slider for all but the last subplot
+    fig.update_xaxes(rangeslider_visible=False)
+
+    return fig
+    
 def get_financials(ticker):
     """
     Fetches financial data for a given stock ticker using the Quantiq API.
@@ -77,6 +166,69 @@ def get_financials(ticker):
         pass
 
     return data
+
+def get_technicals(ticker):
+    """
+    Fetches technical indicators for a given stock ticker using yfinance.
+    """
+    try:
+        url = f"https://www.quantiq.live/api/technical-indicator?symbol={ticker}&timeframe=1Hour&period=20"
+        payload = f"apiKey={QUANTIQ_API_KEY}"
+        headers = {
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+
+        response = requests.request("POST", url, headers=headers, data=payload)
+        data = response.json()
+        
+        if 'bars' not in data or not data['bars']:
+            st.warning(f"No bar data returned for {ticker} from the API.")
+            return pd.DataFrame()
+
+        # 1. Convert the list of bars into a pandas DataFrame
+        df = pd.DataFrame(data['bars'])
+
+        # 2. Prepare the DataFrame for pandas-ta
+        #    - Rename columns to the required lowercase format
+        #    - Set the 'Timestamp' as a proper DatetimeIndex
+        df.rename(columns={
+            'ClosePrice': 'close',
+            'HighPrice': 'high',
+            'LowPrice': 'low',
+            'OpenPrice': 'open',
+            'Volume': 'volume',
+            'Timestamp': 'timestamp'
+        }, inplace=True)
+        
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df.set_index('timestamp', inplace=True)
+        
+        # Ensure data is in chronological order (oldest first) for correct calculations
+        df.sort_index(inplace=True)
+
+        # 3. Define your technical analysis strategy
+        #    You can easily add or remove indicators here
+        my_strategy = ta.Strategy(
+            name="Common Indicators",
+            description="SMA, EMA, RSI, and Bollinger Bands",
+            ta=[
+                {"kind": "sma", "length": 20},
+                {"kind": "ema", "length": 50},
+                {"kind": "rsi"}, # Uses default length of 14
+                {"kind": "bbands", "length": 20, "std": 2},
+                {"kind": "macd"},
+            ]
+        )
+
+        # 4. Calculate the indicators and append them to the DataFrame
+        df.ta.strategy(my_strategy)
+        
+        return df
+
+
+    except Exception as e:
+        st.error(f"Error fetching technicals for {ticker}: {e}")
+        return pd.DataFrame()
 
 def get_stock_recommendation(ticker, financials):
     """
@@ -262,7 +414,14 @@ if page == "Chat":
         
         # Using a container to group the button and message
         with st.container():
-            st.info(f"Click the button below to execute the trade for {ticker}.")
+            st.info(f"Click the button below to execute the trade for {ticker}. You can adjust the number of shares before executing.")
+            shares_to_trade = st.number_input(
+                label="Number of Shares",
+                min_value=1,
+                value=10,  # Sets a default value
+                step=1,
+                key=f"shares_{ticker}_{action}" # A unique key is crucial
+            )
             if st.button(f"Execute {action} for {ticker}", key=f"execute_{ticker}_{action}"):
                 with st.spinner(f"Executing {action} for {ticker}..."):
                     price = get_current_price(ticker)
@@ -294,7 +453,7 @@ if page == "Chat":
                 st.rerun() # Rerun to update the UI immediately
 
     # --- Chat Input Logic ---
-    if prompt := st.chat_input("What would you like to do? (e.g., 'find stocks', 'analyze AAPL', 'hedge portfolio')"):
+    if prompt := st.chat_input("What would you like to do? (e.g., 'find stocks', 'analyze AAPL', 'hedge portfolio', 'get technicals MSFT')"):
         # Add user message to chat history and display it
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
@@ -313,7 +472,14 @@ if page == "Chat":
                         response_content = f"Here are some small-cap stocks I found: {', '.join(tickers)}"
                     else:
                         response_content = "Sorry, I couldn't fetch any stock tickers at the moment."
-
+                elif "check house and senate trades" in prompt.lower():
+                    ticker = prompt.split(" ")[-1].upper()
+                    response = get_government_official_trades(ticker)
+                    if response: 
+                        response_content = f"Here are some recent trades by House and Senate officials on {ticker}:\n\n{response}"
+                    else:
+                        response_content = f"Sorry, I couldn't find any trades for {ticker}."
+                
                 elif "analyze" in prompt.lower():
                     ticker = prompt.split(" ")[-1].upper()
                     financials = get_financials(ticker)
@@ -325,6 +491,19 @@ if page == "Chat":
                         action = "BUY" if rec_upper.startswith("BUY") else "SHORT"
                         st.session_state.actionable_recommendation = {"ticker": ticker, "action": action}
 
+                elif "get technicals" in prompt.lower():
+                    ticker = prompt.split(" ")[-1].upper()
+                    st.info(f"Fetching technical data for {ticker}...")
+                    
+                    technicals = get_technicals(ticker)
+                    
+                    if not technicals.empty:
+                        fig = plot_technicals(technicals, ticker)
+                        
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning(f"No technicals available for {ticker}")
+                        
                 elif "sell" in prompt.lower():
                     ticker_to_sell = prompt.split(" ")[-1].upper()
                     if os.path.exists(PORTFOLIO_CSV):
