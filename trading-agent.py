@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import pandas_ta as ta
 import requests
 import openai
 import yfinance as yf
@@ -89,6 +90,7 @@ def plot_technicals(df, ticker):
     """
     # 1. Create a figure with subplots
     # We need 4 rows: 1 for price, 1 for volume, 1 for RSI, 1 for MACD
+    fig = go.Figure()
     fig = make_subplots(
         rows=4, cols=1,
         shared_xaxes=True,
@@ -172,7 +174,7 @@ def get_technicals(ticker):
     Fetches technical indicators for a given stock ticker using yfinance.
     """
     try:
-        url = f"https://www.quantiq.live/api/technical-indicator?symbol={ticker}&timeframe=1Hour&period=20"
+        url = f"https://www.quantiq.live/api/technical-indicator?symbol={ticker}&timeframe=1Day&period=100"
         payload = f"apiKey={QUANTIQ_API_KEY}"
         headers = {
             'Content-Type': 'application/x-www-form-urlencoded'
@@ -185,12 +187,8 @@ def get_technicals(ticker):
             st.warning(f"No bar data returned for {ticker} from the API.")
             return pd.DataFrame()
 
-        # 1. Convert the list of bars into a pandas DataFrame
         df = pd.DataFrame(data['bars'])
 
-        # 2. Prepare the DataFrame for pandas-ta
-        #    - Rename columns to the required lowercase format
-        #    - Set the 'Timestamp' as a proper DatetimeIndex
         df.rename(columns={
             'ClosePrice': 'close',
             'HighPrice': 'high',
@@ -202,25 +200,21 @@ def get_technicals(ticker):
         
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df.set_index('timestamp', inplace=True)
-        
-        # Ensure data is in chronological order (oldest first) for correct calculations
+
         df.sort_index(inplace=True)
 
-        # 3. Define your technical analysis strategy
-        #    You can easily add or remove indicators here
         my_strategy = ta.Strategy(
             name="Common Indicators",
             description="SMA, EMA, RSI, and Bollinger Bands",
             ta=[
                 {"kind": "sma", "length": 20},
                 {"kind": "ema", "length": 50},
-                {"kind": "rsi"}, # Uses default length of 14
+                {"kind": "rsi"},
                 {"kind": "bbands", "length": 20, "std": 2},
                 {"kind": "macd"},
             ]
         )
 
-        # 4. Calculate the indicators and append them to the DataFrame
         df.ta.strategy(my_strategy)
         
         return df
@@ -398,6 +392,9 @@ if "actionable_recommendation" not in st.session_state:
 # --- Page Navigation ---
 page = st.sidebar.radio("Navigate", ["Chat", "Portfolio Performance"])
 
+if "technicals_data" not in st.session_state:
+    st.session_state.technicals_data = None
+
 if page == "Chat":
     st.header("Chat with your AI Analyst")
 
@@ -452,6 +449,21 @@ if page == "Chat":
                 st.session_state.actionable_recommendation = None
                 st.rerun() # Rerun to update the UI immediately
 
+    if st.session_state.get('technicals_data') is not None:
+        ticker = st.session_state.technicals_data["ticker"]
+        technicals_df = st.session_state.technicals_data["data"]
+
+        if technicals_df is not None and not technicals_df.empty:
+            st.info(f"Displaying technical analysis for {ticker}. This chart will remain until you request a new one.")
+            fig = plot_technicals(technicals_df, ticker)
+            
+            st.plotly_chart(fig, use_container_width=True)
+            if st.button("Clear Technicals Chart", key="clear_technicals"):
+                st.session_state.technicals_data = None
+                st.rerun()
+        else:
+             st.session_state.technicals_data = None # Clear if data was empty
+    
     # --- Chat Input Logic ---
     if prompt := st.chat_input("What would you like to do? (e.g., 'find stocks', 'analyze AAPL', 'hedge portfolio', 'get technicals MSFT')"):
         # Add user message to chat history and display it
@@ -495,14 +507,15 @@ if page == "Chat":
                     ticker = prompt.split(" ")[-1].upper()
                     st.info(f"Fetching technical data for {ticker}...")
                     
-                    technicals = get_technicals(ticker)
-                    
-                    if not technicals.empty:
-                        fig = plot_technicals(technicals, ticker)
+                    technicals_df = get_technicals(ticker)
+
+                    if not technicals_df.empty:
+                        st.session_state.technicals_data = {"ticker": ticker, "data": technicals_df}
+                        response_content = f"I've fetched the technical data for {ticker}. The chart is now displayed above."
                         
-                        st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.warning(f"No technicals available for {ticker}")
+                        response_content = f"Sorry, I couldn't fetch technical data for {ticker}."
+                        st.session_state.technicals_data = None # Clear any old chart
                         
                 elif "sell" in prompt.lower():
                     ticker_to_sell = prompt.split(" ")[-1].upper()
