@@ -106,4 +106,4 @@ This page provides a comprehensive overview of your investment activities. It in
 - Portfolio Value Over Time: An area chart visualizing the growth of your portfolio's value since your first trade.
 
 This project is free for everyone. If you'd wish to donate, use the following button:
-[☕ Buy me a coffee via PayPal](paypal.me/bitheap)
+[☕ Buy me a coffee via PayPal](https://paypal.me/bitheap)
