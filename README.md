@@ -1,4 +1,4 @@
-# AI-Powered Stock Picking Assistant
+# AI-Powered Trading Agent
 I was just curious if AI can hallucinate where the market is going.
 
 This application uses Perplexity, GPT-5, QuantiQ.live and Alpaca to find small-cap stocks, provide analysis and recommendations, book orders on these stocks and track the performance of the portfolio. I also added Streamlit for a better user experience. 
@@ -17,6 +17,8 @@ This application uses Perplexity, GPT-5, QuantiQ.live and Alpaca to find small-c
 - Portfolio Tracking: A dedicated page to view your complete trade history, current holdings, and overall portfolio performance, including value over time.
 
 - Persistent Portfolio: All trades are saved to a local portfolio.csv file, so your data is preserved between sessions.
+
+- Congress trades on specific stocks can be performed through the QuantiQ API.  
 
 ## Getting Started
 Follow these instructions to get the application running on your local machine.
@@ -84,6 +86,8 @@ This is the main interactive page. You can use natural language to ask the AI an
 - "analyze AAPL": The assistant will fetch financial data for the specified ticker (e.g., AAPL), use GPT-4o to analyze it, and provide a recommendation. If the recommendation is actionable (BUY, SELL, SHORT), a button will appear to execute the trade.
 
 - "sell AAPL": If you have a position in the specified ticker, the assistant will ask for confirmation and provide a button to execute the sale.
+
+- "check house and senate trades for {ticker}" - shows all the trades done by Congress officials for that stock.  
 
 ### Portfolio Performance
 This page provides a comprehensive overview of your investment activities. It includes:
