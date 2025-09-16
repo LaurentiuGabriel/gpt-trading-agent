@@ -1,4 +1,4 @@
-# AI-Powered Trading Agent
+# AI Trading Agent
 I was just curious if AI can hallucinate where the market is going.
 
 This application uses Perplexity, GPT-5, QuantiQ.live and Alpaca to find small-cap stocks, provide analysis and recommendations, book orders on these stocks and track the performance of the portfolio. I also added Streamlit for a better user experience. 
@@ -39,6 +39,9 @@ This project requires three API keys. You'll need to store them in a .env file f
 PERPLEXITY_API_KEY="your_perplexity_api_key_here"
 OPENAI_API_KEY="your_openai_api_key_here"
 QUANTIQ_API="your_quantiq_api_key_here"
+ALPACA_API_KEY="YOUR_PAPER_API_KEY_ID"
+ALPACA_SECRET_KEY="YOUR_PAPER_SECRET_KEY"
+ALPACA_PAPER="true"
 ```
 PERPLEXITY_API_KEY: Get this from your Perplexity AI account.
 
@@ -87,7 +90,9 @@ This is the main interactive page. You can use natural language to ask the AI an
 
 - "sell AAPL": If you have a position in the specified ticker, the assistant will ask for confirmation and provide a button to execute the sale.
 
-- "check house and senate trades for {ticker}" - shows all the trades done by Congress officials for that stock.  
+- "check house and senate trades for {ticker}" - shows all the trades done by Congress officials for that stock.
+
+- "get technicals {ticker}" - calculates the major technical indicators and shows them in nice graphs. 
 
 ### Portfolio Performance
 This page provides a comprehensive overview of your investment activities. It includes:
@@ -99,3 +104,6 @@ This page provides a comprehensive overview of your investment activities. It in
 - Total Portfolio Value: A metric showing the total current market value of all your holdings.
 
 - Portfolio Value Over Time: An area chart visualizing the growth of your portfolio's value since your first trade.
+
+This project is free for everyone. If you'd wish to donate, use the following button:
+[☕ Buy me a coffee via PayPal](https://paypal.me/bitheap)
