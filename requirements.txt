@@ -4,3 +4,4 @@ requests
 openai
 yfinance
 plotly
+pytrends

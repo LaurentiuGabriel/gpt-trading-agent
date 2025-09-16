@@ -5,16 +5,18 @@ import requests
 import openai
 import yfinance as yf
 import os
-from datetime import datetime
+from datetime import datetime, date
 from dotenv import load_dotenv
 import alpaca_trade_api as tradeapi
 import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from pytrends.request import TrendReq
+import plotly.express as px
+import vectorbt as vbt
 
 # --- Configuration ---
-# Make sure to set these as environment variables for security
 load_dotenv()
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -24,12 +26,44 @@ ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY")
 # Use paper trading by default, change to "false" in .env for live
 ALPACA_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 
-# Set up OpenAI client
 openai.api_key = OPENAI_API_KEY
 
 PORTFOLIO_CSV = "portfolio.csv"
 
 # --- Helper Functions ---
+@st.cache_data
+def get_stock_details(ticker):
+    """
+    Fetches detailed stock information from yfinance and caches the result.
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        return stock.info
+    except Exception as e:
+        st.warning(f"Could not fetch details for {ticker}: {e}")
+        return None
+    
+@st.cache_data
+def run_backtest(ticker, start_date, end_date, initial_cash):
+    try:
+        price = vbt.YFData.download(ticker, start=start_date, end=end_date).get('Close')
+
+        if price.empty:
+            st.error("Could not download data for the given ticker and date range. Please try another ticker.")
+            return None, None
+
+        fast_ma = vbt.MA.run(price, 10, short_name='fast')
+        slow_ma = vbt.MA.run(price, 30, short_name='slow')
+
+        entries = fast_ma.ma_crossed_above(slow_ma)
+        exits = fast_ma.ma_crossed_below(slow_ma)
+
+        pf = vbt.Portfolio.from_signals(price, entries, exits, init_cash=initial_cash, freq='1D')
+        
+        return pf.stats(), pf.plot()
+    except Exception as e:
+        st.error(f"An error occurred during the backtest: {e}")
+        return None, None
 
 def get_small_cap_stocks():
     """
@@ -89,7 +123,6 @@ def plot_technicals(df, ticker):
     Generates a professional financial chart with technical indicators using Plotly.
     """
     # 1. Create a figure with subplots
-    # We need 4 rows: 1 for price, 1 for volume, 1 for RSI, 1 for MACD
     fig = go.Figure()
     fig = make_subplots(
         rows=4, cols=1,
@@ -278,7 +311,7 @@ def hedge_portfolio():
         """
         
         response = openai.chat.completions.create(
-            model="gpt-5", # NOTE: "gpt-5" is a placeholder for a future/custom model.
+            model="gpt-5", 
             messages=[
                 {"role": "system", "content": "You are an expert hedge fund analyst. You provide concise, actionable hedging strategies in a specific format."},
                 {"role": "user", "content": prompt_content}
@@ -303,6 +336,73 @@ def hedge_portfolio():
     except Exception as e:
         return {"error": f"An error occurred while communicating with OpenAI: {e}"}
 
+def get_company_name(ticker):
+    """Gets the company's long name from its ticker using yfinance."""
+    try:
+        stock_info = yf.Ticker(ticker).info
+        return stock_info.get('longName', ticker) # Fallback to ticker if name not found
+    except Exception:
+        return ticker
+
+def generate_google_trends_queries(ticker, company_name):
+    """Uses GPT-4 to generate relevant search queries for Google Trends."""
+    
+    prompt = f"""
+    Act as a financial analyst. For the company {company_name} ({ticker}), generate exactly 5 distinct Google search queries that could act as leading indicators for stock price movements.
+    Include a mix of bullish and bearish terms covering topics like products, scandals, financial health, and public interest.
+    Return the list as a simple comma-separated string, and nothing else.
+    Example: Tesla recall, Cybertruck release date, Elon Musk lawsuit, Tesla stock forecast, Model 3 sales
+    """
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful financial analyst assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+            max_tokens=100,
+        )
+        query_string = response.choices[0].message.content
+        queries = [q.strip() for q in query_string.split(',')]
+        return queries
+    except Exception as e:
+        st.error(f"Error calling OpenAI API for trend queries: {e}")
+        return []
+
+def get_google_trends_data(queries, timeframe='today 3-m'):
+    """Fetches Google Trends data for a list of queries."""
+    if not queries:
+        return None
+    pytrends = TrendReq(hl='en-US', tz=360)
+    try:
+        pytrends.build_payload(kw_list=queries, timeframe=timeframe)
+        trends_df = pytrends.interest_over_time()
+        if trends_df.empty:
+            return None
+        return trends_df.drop(columns=['isPartial'])
+    except Exception as e:
+        if "429" in str(e):
+            st.error("Google Trends is rate-limiting our requests. Please wait a minute before trying again.")
+            print(e)
+        else:
+            st.error(f"Error fetching Google Trends data: {e}")
+        return None
+
+def plot_google_trends(df, ticker):
+    """Generates an interactive plot for Google Trends data using Plotly."""
+    fig = go.Figure()
+    for col in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df[col], mode='lines', name=col))
+    fig.update_layout(
+        title=f'Google Search Trend Interest for {ticker}',
+        height=500,
+        template='plotly_dark',
+        yaxis_title='Relative Search Interest (0-100)',
+        legend_title_text='Search Queries'
+    )
+    return fig
+
 
 def update_portfolio(ticker, action, shares, price):
     """
@@ -322,9 +422,10 @@ def update_portfolio(ticker, action, shares, price):
         portfolio_df = new_trade
     portfolio_df.to_csv(PORTFOLIO_CSV, index=False)
     
-def book_trade_alpaca(api, ticker, shares, action):
+def book_trade_alpaca(api, ticker, shares, action, stop_loss=None, take_profit=None):
     """
-    Books a trade with a market order through the Alpaca API.
+    Books a trade through the Alpaca API. If stop_loss and take_profit are provided
+    for a BUY order, it creates a bracket order. Otherwise, a simple market order.
     Returns (success_boolean, message_or_order_object).
     """
     if not api:
@@ -337,14 +438,29 @@ def book_trade_alpaca(api, ticker, shares, action):
     else:
         return False, f"Invalid action: {action}"
 
+    # Base order parameters
+    order_data = {
+        'symbol': ticker,
+        'qty': shares,
+        'side': side,
+        'type': 'market',
+        'time_in_force': 'day'
+    }
+
+    is_buy = action.upper() == "BUY"
+    has_stop = stop_loss is not None and float(stop_loss) > 0
+    has_profit = take_profit is not None and float(take_profit) > 0
+
+    if is_buy and has_stop and has_profit:
+        order_data['order_class'] = 'bracket'
+        order_data['stop_loss'] = {'stop_price': str(stop_loss)}
+        order_data['take_profit'] = {'limit_price': str(take_profit)}
+        st.info("Submitting a bracket order with stop-loss and take-profit.")
+    elif is_buy and (has_stop or has_profit):
+        st.warning("To create a bracket order, both a valid stop-loss AND take-profit price must be provided. Submitting a simple market order instead.")
+
     try:
-        order = api.submit_order(
-            symbol=ticker,
-            qty=shares,
-            side=side,
-            type='market',
-            time_in_force='day'  
-        )
+        order = api.submit_order(**order_data)
         return True, order
     except Exception as e:
         return False, str(e)
@@ -355,12 +471,10 @@ def get_current_price(ticker):
     """
     try:
         stock = yf.Ticker(ticker)
-        # Use 'bid' or 'regularMarketPrice' for more reliable real-time data
         info = stock.info
         price = info.get('bid') or info.get('regularMarketPrice')
         if price:
             return price
-        # Fallback to previous close if real-time price is unavailable
         price = stock.history(period="1d")['Close'].iloc[-1]
         return price
     except Exception as e:
@@ -390,64 +504,101 @@ if "actionable_recommendation" not in st.session_state:
     st.session_state.actionable_recommendation = None
 
 # --- Page Navigation ---
-page = st.sidebar.radio("Navigate", ["Chat", "Portfolio Performance"])
+page = st.sidebar.radio("Navigate", ["Chat", "Portfolio Performance", "Backtesting Engine"])
 
 if "technicals_data" not in st.session_state:
     st.session_state.technicals_data = None
+    
+if "trends_data" not in st.session_state: 
+    st.session_state.trends_data = None
 
 if page == "Chat":
     st.header("Chat with your AI Analyst")
 
-    # Display chat messages from history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # --- Actionable Button Logic ---
-    # Display the button if there's an actionable recommendation in the session state
     if rec := st.session_state.actionable_recommendation:
         ticker = rec["ticker"]
         action = rec["action"]
         
-        # Using a container to group the button and message
         with st.container():
             st.info(f"Click the button below to execute the trade for {ticker}. You can adjust the number of shares before executing.")
             shares_to_trade = st.number_input(
                 label="Number of Shares",
                 min_value=1,
-                value=10,  # Sets a default value
+                value=10,  
                 step=1,
-                key=f"shares_{ticker}_{action}" # A unique key is crucial
+                key=f"shares_{ticker}_{action}" 
             )
+            
+            stop_loss_price = None
+            take_profit_price = None
+
+            if action.upper() == "BUY":
+                st.markdown("---")
+                st.markdown("##### Optional: Add Stop-Loss & Take-Profit (Bracket Order)")
+                col1, col2 = st.columns(2)
+                with col1:
+                    stop_loss_price = st.number_input(
+                        label="Stop-Loss Price",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key=f"stop_loss_{ticker}",
+                        help="The price to trigger a sell order to limit losses. Set BOTH SL and TP to create a bracket order."
+                    )
+                with col2:
+                    take_profit_price = st.number_input(
+                        label="Take-Profit Price",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key=f"take_profit_{ticker}",
+                        help="The limit price to trigger a sell order to lock in profits. Set BOTH SL and TP to create a bracket order."
+                    )
+            
             if st.button(f"Execute {action} for {ticker}", key=f"execute_{ticker}_{action}"):
                 with st.spinner(f"Executing {action} for {ticker}..."):
-                    price = get_current_price(ticker)
-                    shares_to_trade = 10
-                    if price:
-                        # For simplicity, assuming 100 shares per trade
-                        update_portfolio(ticker, action, 100, price)
-                        success_message = f"Trade executed: {action} 100 shares of {ticker} at ${price:.2f}."
-                        success, message = book_trade_alpaca(alpaca_api, ticker, shares_to_trade, action)
-                        if success:
-                            order_details = message
-                            # Get price for logging, actual fill price is in order_details from Alpaca
-                            price_for_log = get_current_price(ticker)
-                            if price_for_log:
-                             # Log the trade to our local CSV *after* successful submission
-                                success_msg = f"✅ **Alpaca trade submitted!** {action} {shares_to_trade} shares of {ticker}. Order ID: `{order_details.id}`."
-                                st.success(success_msg)
-                                st.session_state.messages.append({"role": "assistant", "content": success_msg})
-                            else:
-                                st.error("Alpaca order submitted, but failed to fetch price for local portfolio log.")
+                    success, message = book_trade_alpaca(
+                        alpaca_api, 
+                        ticker, 
+                        shares_to_trade, 
+                        action,
+                        stop_loss=stop_loss_price,
+                        take_profit=take_profit_price
+                    )
+                    
+                    if success:
+                        order_details = message
+                        price_for_log = get_current_price(ticker)
+                        if price_for_log:
+                            update_portfolio(ticker, action, shares_to_trade, price_for_log)
+                            success_msg = f"✅ **Alpaca trade submitted!** {action} {shares_to_trade} shares of {ticker}. Order ID: `{order_details.id}`."
+                            st.success(success_msg)
+                            st.session_state.messages.append({"role": "assistant", "content": success_msg})
+                        else:
+                            st.error("Alpaca order submitted, but failed to fetch price for local portfolio log.")
                     else:
-                        # If Alpaca trade fails
                         error_msg = f"❌ **Alpaca trade failed:** {message}"
                         st.error(error_msg)
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
                 
-                # Clear the recommendation to remove the button and prevent re-execution
                 st.session_state.actionable_recommendation = None
                 st.rerun() # Rerun to update the UI immediately
+                
+    if st.session_state.get('trends_data') is not None:
+        ticker = st.session_state.trends_data["ticker"]
+        trends_df = st.session_state.trends_data["data"]
+        st.info(f"Displaying Google Trends analysis for {ticker}. This chart will remain until you request a new one.")
+        fig = plot_google_trends(trends_df, ticker)
+        st.plotly_chart(fig, use_container_width=True)
+        if st.button("Clear Google Trends Chart", key="clear_trends"):
+            st.session_state.trends_data = None
+            st.rerun()
 
     if st.session_state.get('technicals_data') is not None:
         ticker = st.session_state.technicals_data["ticker"]
@@ -465,19 +616,16 @@ if page == "Chat":
              st.session_state.technicals_data = None # Clear if data was empty
     
     # --- Chat Input Logic ---
-    if prompt := st.chat_input("What would you like to do? (e.g., 'find stocks', 'analyze AAPL', 'hedge portfolio', 'get technicals MSFT')"):
-        # Add user message to chat history and display it
+    if prompt := st.chat_input("What would you like to do? (e.g., 'find stocks', 'analyze AAPL', 'hedge portfolio', 'get technicals MSFT', 'get trends TSLA')"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Process the prompt and generate assistant response
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 response_content = ""
-                # Clear any previous recommendation before processing a new one
                 st.session_state.actionable_recommendation = None
-
+                prompt_lower = prompt.lower()
                 if "find stocks" in prompt.lower():
                     tickers = get_small_cap_stocks()
                     if tickers:
@@ -517,7 +665,23 @@ if page == "Chat":
                         response_content = f"Sorry, I couldn't fetch technical data for {ticker}."
                         st.session_state.technicals_data = None # Clear any old chart
                         
-                elif "sell" in prompt.lower():
+                elif "trend" in prompt_lower:
+                    ticker = prompt.split(" ")[-1].upper()
+                    st.info(f"Fetching Google Trends data for {ticker}...")
+                    company_name = get_company_name(ticker)
+                    queries = generate_google_trends_queries(ticker, company_name)
+                    if queries:
+                        trends_df = get_google_trends_data(queries)
+                        if trends_df is not None and not trends_df.empty:
+                            st.session_state.trends_data = {"ticker": ticker, "data": trends_df}
+                            response_content = f"I've fetched the Google Trends data for {ticker}. The chart is now displayed above."
+                        else:
+                            response_content = f"Sorry, I couldn't fetch Google Trends data for {ticker}. The search terms might have low volume."
+                            st.session_state.trends_data = None
+                    else:
+                        response_content = f"Sorry, I couldn't generate search queries for {ticker}."
+                        
+                elif "sell" in prompt_lower:
                     ticker_to_sell = prompt.split(" ")[-1].upper()
                     if os.path.exists(PORTFOLIO_CSV):
                         portfolio_df = pd.read_csv(PORTFOLIO_CSV)
@@ -529,7 +693,7 @@ if page == "Chat":
                     else:
                         response_content = "Your portfolio is empty."
                 
-                elif "hedge" in prompt.lower():
+                elif "hedge" in prompt_lower:
                     hedge_result = hedge_portfolio()
                     if "error" in hedge_result:
                         response_content = hedge_result["error"]
@@ -538,7 +702,6 @@ if page == "Chat":
                         justification = hedge_result['justification']
                         response_content = f"🛡️ **Hedge Proposal:** To hedge your portfolio, I recommend buying **{ticker}**. \n\n*Justification:* {justification}"
                         
-                        # Set up the actionable recommendation so the BUY button appears
                         st.session_state.actionable_recommendation = {"ticker": ticker, "action": "BUY"}
 
                 else:
@@ -546,7 +709,6 @@ if page == "Chat":
 
                 st.markdown(response_content)
         
-        # Add assistant's response to chat history
         st.session_state.messages.append({"role": "assistant", "content": response_content})
         st.rerun() # Rerun to display the new button if one was set
 
@@ -567,6 +729,7 @@ elif page == "Portfolio Performance":
 
         # Display current holdings and performance
         performance_data = []
+        heatmap_data = []
         total_value = 0
         total_cost_basis_overall = 0
         total_pnl_overall = 0
@@ -577,7 +740,16 @@ elif page == "Portfolio Performance":
                 if current_price:
                     value = shares * current_price
                     total_value += value
-                    
+                    stock_details = get_stock_details(ticker)
+                    sector = stock_details.get('sector', 'N/A') if stock_details else 'N/A'
+
+                    # Add data for the heatmap/treemap
+                    heatmap_data.append({
+                        "Ticker": ticker,
+                        "Sector": sector,
+                        "Market Value": value
+                    })
+
                     # Improved Gain/Loss Calculation
                     buy_trades = portfolio_df[(portfolio_df['ticker'] == ticker) & (portfolio_df['action'] != 'SELL')]
                     sell_trades = portfolio_df[(portfolio_df['ticker'] == ticker) & (portfolio_df['action'] == 'SELL')]
@@ -629,8 +801,7 @@ elif page == "Portfolio Performance":
             value=f"${total_cost_basis_overall:,.2f}"
         )
         st.markdown("---") 
-
-        # --- Charting ---
+        
         all_tickers = portfolio_df['ticker'].unique().tolist()
         if all_tickers:
             start_date = pd.to_datetime(portfolio_df['date']).min()
@@ -642,7 +813,6 @@ elif page == "Portfolio Performance":
                     historical_data = yf.download(all_tickers, start=start_date, end=end_date, progress=False)
                     if not historical_data.empty:
                         adj_close_prices = historical_data['Close']
-                        # Handle case for single ticker download (returns a Series)
                         if isinstance(adj_close_prices, pd.Series):
                             adj_close_prices = adj_close_prices.to_frame(name=all_tickers[0])
                         
@@ -651,3 +821,59 @@ elif page == "Portfolio Performance":
                         st.warning("Could not retrieve historical price data for charting.")
                 except Exception as e:
                     st.error(f"An error occurred while fetching historical data for charts: {e}")
+        
+        st.subheader("Portfolio Concentration")
+        if heatmap_data:
+            heatmap_df = pd.DataFrame(heatmap_data)
+            # Create a treemap for visualization
+            fig = px.treemap(heatmap_df,
+                             path=[px.Constant("All Stocks"), 'Sector', 'Ticker'],
+                             values='Market Value',
+                             color='Sector',
+                             hover_data={'Market Value': ':.2f'},
+                             title='Portfolio Concentration by Sector and Ticker')
+
+            fig.update_layout(
+                margin=dict(t=50, l=25, r=25, b=25),
+                template='plotly_dark'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No holdings to display in the concentration map.")
+            
+elif page == "Backtesting Engine":
+    st.header("Backtesting Engine")
+    st.markdown("""
+    This engine simulates a trading strategy on historical data to evaluate its performance. 
+    As a placeholder for a dynamic AI recommendation, we are using a simple **Simple Moving Average (SMA) Crossover** strategy:
+    - **Buy Signal**: When the fast-moving average (10-day) crosses above the slow-moving average (30-day).
+    - **Sell Signal**: When the fast-moving average crosses below the slow-moving average.
+    """)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        ticker = st.text_input("Ticker Symbol", value="AAPL")
+        start_date = st.date_input("Start Date", value=date(2022, 1, 1))
+    with col2:
+        initial_cash = st.number_input("Initial Cash", min_value=1000, value=10000, step=1000)
+        end_date = st.date_input("End Date", value=date.today())
+
+    if st.button("Run Backtest"):
+        with st.spinner("Running backtest... This may take a moment."):
+            stats, plot_fig = run_backtest(ticker, str(start_date), str(end_date), initial_cash)
+            
+            if stats is not None:
+                st.subheader("Backtest Results")
+                
+                st.markdown("---")
+                cols = st.columns(4)
+                cols[0].metric("Total Return [%]", f"{stats['Total Return [%]']:.2f}")
+                cols[1].metric("Max Drawdown [%]", f"{stats['Max Drawdown [%]']:.2f}")
+                cols[2].metric("Sharpe Ratio", f"{stats['Sharpe Ratio']:.2f}")
+                cols[3].metric("Win Rate [%]", f"{stats['Win Rate [%]']:.2f}")
+                st.markdown("---")
+                
+                st.plotly_chart(plot_fig, use_container_width=True)
+                
+                with st.expander("View Detailed Stats"):
+                    st.dataframe(stats)
