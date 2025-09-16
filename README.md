@@ -92,7 +92,9 @@ This is the main interactive page. You can use natural language to ask the AI an
 
 - "check house and senate trades for {ticker}" - shows all the trades done by Congress officials for that stock.
 
-- "get technicals {ticker}" - calculates the major technical indicators and shows them in nice graphs. 
+- "get technicals {ticker}" - calculates the major technical indicators and shows them in nice graphs.
+
+- "get trends {ticker}" - uses GPT-4 to create Google searches related to the {ticker} and checks Google Trends for these queries. 
 
 ### Portfolio Performance
 This page provides a comprehensive overview of your investment activities. It includes:
