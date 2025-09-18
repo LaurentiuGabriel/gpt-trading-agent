@@ -16,6 +16,7 @@ from pytrends.request import TrendReq
 import plotly.express as px
 import vectorbt as vbt
 from fredapi import Fred
+import praw
 
 # --- Configuration ---
 load_dotenv()
@@ -28,6 +29,10 @@ ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY")
 ALPACA_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
 FMP_API_KEY = os.environ.get("FMP_API_KEY")
 FRED_API_KEY = os.environ.get("FRED_API_KEY")
+REDDIT_CLIENT_ID = os.environ.get("REDDIT_CLIENT_ID")
+REDDIT_CLIENT_SECRET = os.environ.get("REDDIT_CLIENT_SECRET")
+REDDIT_USER_AGENT = os.environ.get("REDDIT_USER_AGENT", "StockAnalysisBot/1.0")
+NEWSAPI_KEY = os.environ.get("NEWSAPI_KEY")
 
 openai.api_key = OPENAI_API_KEY
 
@@ -174,6 +179,86 @@ def run_backtest(ticker, start_date, end_date, initial_cash):
     except Exception as e:
         st.error(f"An error occurred during the backtest: {e}")
         return None, None
+
+def fetch_reddit_posts(ticker, subreddits=['wallstreetbets', 'stocks', 'investing'], limit=50):
+    """
+    Fetch Reddit posts containing stock ticker mentions
+    """
+    if not all([REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USER_AGENT]):
+        st.error("Reddit API credentials not configured. Please set REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, and REDDIT_USER_AGENT in your .env file.")
+        return pd.DataFrame()
+    
+    try:
+        # Initialize Reddit instance
+        reddit = praw.Reddit(
+            client_id=REDDIT_CLIENT_ID,
+            client_secret=REDDIT_CLIENT_SECRET,
+            user_agent=REDDIT_USER_AGENT
+        )
+
+        posts = []
+        query = f'${ticker} OR {ticker}'
+        
+        for subreddit in subreddits:
+            try:
+                # Search for posts in each subreddit
+                for submission in reddit.subreddit(subreddit).search(query, limit=limit, time_filter='month'):
+                    posts.append({
+                        'title': submission.title,
+                        'score': submission.score,
+                        'url': f'https://reddit.com{submission.permalink}',
+                        'comments': submission.num_comments,
+                        'created_utc': datetime.fromtimestamp(submission.created_utc),
+                        'subreddit': subreddit,
+                        'flair': submission.link_flair_text,
+                        'body': submission.selftext[:500] + "..." if len(submission.selftext) > 500 else submission.selftext
+                    })
+            except Exception as e:
+                st.warning(f"Error fetching from r/{subreddit}: {str(e)}")
+                continue
+
+        return pd.DataFrame(posts)
+    except Exception as e:
+        st.error(f"Error connecting to Reddit API: {e}")
+        return pd.DataFrame()
+
+def fetch_news(ticker):
+    """
+    Fetch news articles for a specific ticker using NewsAPI
+    """
+    if not NEWSAPI_KEY or NEWSAPI_KEY == "your_newsapi_key_here":
+        st.error("NewsAPI key not configured. Please set NEWSAPI_KEY in your .env file.")
+        return pd.DataFrame()
+    
+    try:
+        # Calculate date range (last 30 days)
+        to_date = datetime.now().strftime('%Y-%m-%d')
+        from_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        
+        url = f"https://newsapi.org/v2/everything?q={ticker}&from={from_date}&to={to_date}&sortBy=publishedAt&language=en&apiKey={NEWSAPI_KEY}"
+        
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data['status'] != 'ok' or data['totalResults'] == 0:
+            st.info(f"No news articles found for {ticker}")
+            return pd.DataFrame()
+        
+        articles = []
+        for article in data['articles']:
+            articles.append({
+                'title': article['title'],
+                'source': article['source']['name'],
+                'published_at': datetime.strptime(article['publishedAt'], '%Y-%m-%dT%H:%M:%SZ'),
+                'url': article['url'],
+                'description': article['description'][:200] + "..." if article['description'] and len(article['description']) > 200 else article['description']
+            })
+        
+        return pd.DataFrame(articles)
+    except Exception as e:
+        st.error(f"Error fetching news: {e}")
+        return pd.DataFrame()
 
 def get_small_cap_stocks():
     """
@@ -725,7 +810,7 @@ if page == "Chat":
              st.session_state.technicals_data = None # Clear if data was empty
     
     # --- Chat Input Logic ---
-    if prompt := st.chat_input("What would you like to do? (e.g., 'find stocks', 'analyze AAPL', 'hedge portfolio', 'get technicals MSFT', 'get trends TSLA')"):
+    if prompt := st.chat_input("What would you like to do? (e.g., 'find stocks', 'analyze AAPL', 'hedge portfolio', 'get technicals MSFT', 'get trends TSLA', 'get news GME', 'get social sentiment AMZN')"):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -813,6 +898,91 @@ if page == "Chat":
                         
                         st.session_state.actionable_recommendation = {"ticker": ticker, "action": "BUY"}
 
+                elif "get news" in prompt_lower:
+                    ticker = prompt.split(" ")[-1].upper()
+                    st.info(f"Fetching news for {ticker}...")
+                    
+                    news_df = fetch_news(ticker)
+                    
+                    if not news_df.empty:
+                        response_content = f"Here are the latest news articles for {ticker}:"
+
+                        for _, article in news_df.head(5).iterrows():
+                            response_content += f"\n\n- **{article['title']}** ({article['source']})"
+                            response_content += f"\n  {article['published_at'].strftime('%Y-%m-%d')}"
+                            if article['description']:
+                                response_content += f"\n  {article['description']}"
+                            response_content += f"\n  [Read more]({article['url']})"
+
+                        st.session_state.news_data = {"ticker": ticker, "data": news_df}
+                    else:
+                        response_content = f"Sorry, I couldn't find any news articles for {ticker}."
+
+                elif "get social sentiment" in prompt_lower:
+                    ticker = prompt.split(" ")[-1].upper()
+                    st.info(f"Fetching Reddit posts about {ticker}...")
+                    
+                    reddit_df = fetch_reddit_posts(ticker)
+                    
+                    if not reddit_df.empty:
+                        response_content = f"Here are recent Reddit posts about {ticker}:"
+
+                        for _, post in reddit_df.head(5).iterrows():
+                            response_content += f"\n\n- **{post['title']}** (r/{post['subreddit']}, 👍{post['score']})"
+                            response_content += f"\n  {post['created_utc'].strftime('%Y-%m-%d')}"
+                            if post['body']:
+                                response_content += f"\n  {post['body']}"
+                            response_content += f"\n  [View post]({post['url']})"
+                            
+
+                        st.session_state.reddit_data = {"ticker": ticker, "data": reddit_df}
+                    else:
+                        response_content = f"Sorry, I couldn't find any Reddit posts about {ticker}."
+
+                    if st.session_state.get('news_data') is not None:
+                        ticker = st.session_state.news_data["ticker"]
+                        news_df = st.session_state.news_data["data"]
+                        
+                        st.info(f"Displaying news for {ticker}. This will remain until you request new news.")
+                        st.dataframe(
+                            news_df[['title', 'source', 'published_at', 'url']],
+                            column_config={
+                                "title": "Title",
+                                "source": "Source",
+                                "published_at": "Published",
+                                "url": st.column_config.LinkColumn("URL")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                        
+                        if st.button("Clear News", key="clear_news"):
+                            st.session_state.news_data = None
+                            st.rerun()
+
+                    if st.session_state.get('reddit_data') is not None:
+                        ticker = st.session_state.reddit_data["ticker"]
+                        reddit_df = st.session_state.reddit_data["data"]
+                        
+                        st.info(f"Displaying Reddit posts about {ticker}. This will remain until you request new social sentiment.")
+                        st.dataframe(
+                            reddit_df[['title', 'subreddit', 'score', 'comments', 'created_utc', 'url']],
+                            column_config={
+                                "title": "Title",
+                                "subreddit": "Subreddit",
+                                "score": "Upvotes",
+                                "comments": "Comments",
+                                "created_utc": "Posted",
+                                "url": st.column_config.LinkColumn("URL")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                        
+                        if st.button("Clear Reddit Posts", key="clear_reddit"):
+                            st.session_state.reddit_data = None
+                            st.rerun()
+                
                 else:
                     response_content = "I can help you find stocks, analyze them, hedge your portfolio, or sell positions. What would you like to do?"
 
