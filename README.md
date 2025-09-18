@@ -42,6 +42,12 @@ QUANTIQ_API="your_quantiq_api_key_here"
 ALPACA_API_KEY="YOUR_PAPER_API_KEY_ID"
 ALPACA_SECRET_KEY="YOUR_PAPER_SECRET_KEY"
 ALPACA_PAPER="true"
+FMP_API_KEY=
+FRED_API_KEY=
+REDDIT_CLIENT_ID=
+REDDIT_CLIENT_SECRET=
+REDDIT_USER_AGENT=
+NEWSAPI_KEY=
 ```
 PERPLEXITY_API_KEY: Get this from your Perplexity AI account.
 
@@ -54,6 +60,23 @@ ALPACA_API_KEY: This is the API key from Alpaca trading platform
 ALPACA_SECRET_KEY: This is the secret key from Alpaca that enables you to perform real trades
 
 ALPACA_PAPER: Switch between the paper (virtual money) or the real Alpaca API
+
+FMP_API_KEY: This is the API key for fetching economic events, such as Fed meetings. You can retrieve one from <a href=https://site.financialmodelingprep.com/developer/docs/>here</a>.
+
+FRED_API_KEY: This is the API key for fetching macroeconomic indicators. Fetch it from <a href=https://fredaccount.stlouisfed.org/apikeys>here</a>.
+
+REDDIT_CLIENT_ID: This is the Reddit client id for your account. Check out the section below on how to retrieve one.
+
+REDDIT_CLIENT_SECRET: This is the Reddit secret for your account. Check out the section below on how to retrieve one.
+
+REDDIT_USER_AGENT: A unique string used to get identified by Reddit. E.g.: "python:auto-invest:v1.0 (by /u/your_user)"
+
+NEWSAPI_KEY: This is the API key of the <a href=https://newsapi.org/>NewsAPI</a>. This service is used to retrieve news about specific tickers. 
+
+> **_NOTE:_** The agent can interact with the Reddit API to get the latest posts about a stock from subreddits like r/wallstreetbets, or stocks. To enable this integration, follow these steps:
+> Go to https://www.reddit.com/prefs/apps
+> Create a new application (select "script" type)
+> Replace the placeholder credentials in the script with your actual credentials
 
 3. Install Dependencies
 - Open a terminal or command prompt.
@@ -79,7 +102,7 @@ Your default web browser will automatically open a new tab with the running appl
 
 ## How to Use the App
 The application has two main sections, accessible from the sidebar navigation:
-![alt text](image.png)
+<img width="948" height="455" alt="GUI image" src="https://github.com/user-attachments/assets/0ddc4e83-81c3-4c97-a0b4-0949e157fa4f" />
 
 ### Chat
 This is the main interactive page. You can use natural language to ask the AI analyst to perform tasks. Try prompts like:
