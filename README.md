@@ -73,10 +73,10 @@ REDDIT_USER_AGENT: A unique string used to get identified by Reddit. E.g.: "pyth
 
 NEWSAPI_KEY: This is the API key of the <a href=https://newsapi.org/>NewsAPI</a>. This service is used to retrieve news about specific tickers. 
 
-> **_NOTE:_** The agent can interact with the Reddit API to get the latest posts about a stock from subreddits like r/wallstreetbets, or stocks. To enable this integration, follow these steps:
-> Go to https://www.reddit.com/prefs/apps
-> Create a new application (select "script" type)
-> Replace the placeholder credentials in the script with your actual credentials
+**_NOTE:_** The agent can interact with the Reddit API to get the latest posts about a stock from subreddits like r/wallstreetbets, or stocks. To enable this integration, follow these steps:
+- Go to https://www.reddit.com/prefs/apps
+- Create a new application (select "script" type)
+- Replace the placeholder credentials in the script with your actual credentials
 
 3. Install Dependencies
 - Open a terminal or command prompt.
