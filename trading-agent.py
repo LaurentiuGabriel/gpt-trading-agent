@@ -5,7 +5,7 @@ import requests
 import openai
 import yfinance as yf
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from dotenv import load_dotenv
 import alpaca_trade_api as tradeapi
 import numpy as np
@@ -15,6 +15,7 @@ from plotly.subplots import make_subplots
 from pytrends.request import TrendReq
 import plotly.express as px
 import vectorbt as vbt
+from fredapi import Fred
 
 # --- Configuration ---
 load_dotenv()
@@ -25,12 +26,121 @@ ALPACA_API_KEY = os.environ.get("ALPACA_API_KEY")
 ALPACA_SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY")
 # Use paper trading by default, change to "false" in .env for live
 ALPACA_PAPER = os.environ.get("ALPACA_PAPER", "true").lower() == "true"
+FMP_API_KEY = os.environ.get("FMP_API_KEY")
+FRED_API_KEY = os.environ.get("FRED_API_KEY")
 
 openai.api_key = OPENAI_API_KEY
 
 PORTFOLIO_CSV = "portfolio.csv"
 
 # --- Helper Functions ---
+@st.cache_data
+def get_earnings_calendar(tickers):
+    """
+    Fetches the next earnings date for a list of stock tickers, handling the new dictionary format from yfinance.
+    """
+    earnings_data = []
+    for ticker in tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            calendar = stock.calendar
+            
+            if calendar and 'Earnings Date' in calendar:
+                earnings_dates = calendar.get('Earnings Date')
+                
+                if earnings_dates:
+                    next_earnings_date = earnings_dates[0]
+                    earnings_data.append({
+                        "Ticker": ticker,
+                        "Earnings Date": next_earnings_date.strftime('%Y-%m-%d')
+                    })
+                else:
+                    earnings_data.append({"Ticker": ticker, "Earnings Date": "N/A"})
+            else:
+                earnings_data.append({"Ticker": ticker, "Earnings Date": "N/A"})
+
+        except Exception as e:
+            # This will catch other potential errors during the API call
+            st.warning(f"Could not fetch earnings for {ticker}: {e}")
+            earnings_data.append({"Ticker": ticker, "Earnings Date": "Error"})
+            
+    return pd.DataFrame(earnings_data)
+
+### NEW ###
+@st.cache_data
+def get_fred_series(series_id, _fred_client):
+    """
+    Fetches a single data series from FRED.
+    We pass the fred_client as an argument to make caching work, as the client object itself can't be cached.
+    """
+    try:
+        data = _fred_client.get_series(series_id)
+        return data.sort_index(ascending=False) # Sort to have the most recent data first
+    except Exception as e:
+        st.error(f"Failed to fetch data for series {series_id}: {e}")
+        return None
+
+@st.cache_data
+def get_dividend_dates(tickers):
+    """
+    Fetches the ex-dividend date for a list of stock tickers.
+    """
+    dividend_data = []
+    for ticker in tickers:
+        try:
+            stock = yf.Ticker(ticker)
+            ex_dividend_date_ts = stock.info.get('exDividendDate')
+            if ex_dividend_date_ts:
+                # Convert timestamp to a readable date
+                ex_dividend_date = datetime.fromtimestamp(ex_dividend_date_ts).strftime('%Y-%m-%d')
+                dividend_data.append({"Ticker": ticker, "Ex-Dividend Date": ex_dividend_date})
+            else:
+                dividend_data.append({"Ticker": ticker, "Ex-Dividend Date": "N/A"})
+
+        except Exception:
+             dividend_data.append({"Ticker": ticker, "Ex-Dividend Date": "Error"})
+    return pd.DataFrame(dividend_data)
+
+@st.cache_data
+def get_economic_events():
+    """
+    Fetches major economic events using the Financial Modeling Prep (FMP) API.
+    """
+    if not FMP_API_KEY or FMP_API_KEY == "your_fmp_api_key_here":
+        error_msg = "FMP API key not found. Please add it to your .env file."
+        return pd.DataFrame(), error_msg
+
+    try:
+        today = datetime.now().date()
+        end_date = today + timedelta(days=90)
+
+        date_from = today.strftime('%Y-%m-%d')
+        date_to = end_date.strftime('%Y-%m-%d')
+
+        url = f"https://financialmodelingprep.com/api/v3/economic_calendar?from={date_from}&to={date_to}&apikey={FMP_API_KEY}"
+
+        response = requests.get(url)
+        response.raise_for_status() 
+        data = response.json()
+
+        if not data:
+            return pd.DataFrame(), "No economic events found in the upcoming schedule from FMP."
+
+        df = pd.DataFrame(data)
+        event_keywords = ['FOMC', 'CPI', 'Consumer Price Index']
+        mask = df['event'].str.contains('|'.join(event_keywords), case=False, na=False)
+        filtered_df = df[mask]
+
+        filtered_df = filtered_df[['event', 'date']].copy()
+        filtered_df.rename(columns={'event': 'Event', 'date': 'Date'}, inplace=True)
+
+        return filtered_df, None 
+
+    except Exception as e:
+        error_msg = f"Could not fetch economic events from FMP. Error: {e}"
+        return pd.DataFrame(), error_msg
+
+
 @st.cache_data
 def get_stock_details(ticker):
     """
@@ -503,7 +613,7 @@ if "actionable_recommendation" not in st.session_state:
     st.session_state.actionable_recommendation = None
 
 # --- Page Navigation ---
-page = st.sidebar.radio("Navigate", ["Chat", "Portfolio Performance", "Backtesting Engine"])
+page = st.sidebar.radio("Navigate", ["Chat", "Portfolio Performance", "Backtesting Engine", "Event Calendar", "Macro Indicators"])
 
 if "technicals_data" not in st.session_state:
     st.session_state.technicals_data = None
@@ -876,3 +986,111 @@ elif page == "Backtesting Engine":
                 
                 with st.expander("View Detailed Stats"):
                     st.dataframe(stats)
+                    
+elif page == "Event Calendar":
+    st.header("📅 Event Calendar")
+    
+    tab1, tab2, tab3 = st.tabs(["Upcoming Earnings", "Dividend Dates", "Economic Events"])
+
+    with tab1:
+        st.subheader("Upcoming Earnings For Your Portfolio")
+        if not os.path.exists(PORTFOLIO_CSV):
+            st.info("Your portfolio is empty. Add some stocks via the 'Chat' page to see their earnings dates here.")
+        else:
+            portfolio_df = pd.read_csv(PORTFOLIO_CSV)
+            tickers = portfolio_df['ticker'].unique().tolist()
+            if not tickers:
+                st.info("No tickers found in your portfolio.")
+            else:
+                with st.spinner("Fetching earnings dates..."):
+                    earnings_df = get_earnings_calendar(tickers)
+                    st.dataframe(earnings_df, use_container_width=True)
+
+    with tab2:
+        st.subheader("Upcoming Dividend Dates For Your Portfolio")
+        if not os.path.exists(PORTFOLIO_CSV):
+            st.info("Your portfolio is empty. Add some stocks via the 'Chat' page to see their dividend dates here.")
+        else:
+            portfolio_df = pd.read_csv(PORTFOLIO_CSV)
+            tickers = portfolio_df['ticker'].unique().tolist()
+            if not tickers:
+                st.info("No tickers found in your portfolio.")
+            else:
+                with st.spinner("Fetching dividend dates..."):
+                    dividend_df = get_dividend_dates(tickers)
+                    st.dataframe(dividend_df, use_container_width=True)
+
+    with tab3:
+        st.subheader("Key Economic Events (FOMC, CPI)")
+        with st.spinner("Fetching economic calendar..."):
+            events_df, error_message = get_economic_events()
+            if error_message:
+                st.error(error_message)
+            elif events_df.empty:
+                 st.info("No major upcoming economic events like FOMC or CPI were found.")
+            else:
+                st.dataframe(events_df, use_container_width=True)
+
+elif page == "Macro Indicators":
+    st.header("📈 Key Macroeconomic Indicators")
+
+    if not FRED_API_KEY or FRED_API_KEY == "YOUR_FRED_API_KEY":
+        st.error("FRED_API_KEY not found. Please get a free API key from the FRED website and add it to your .env file to use this feature.")
+        st.stop()
+    
+    fred = Fred(api_key=FRED_API_KEY)
+
+    indicators = {
+        'GDPC1': {
+            'name': 'Real Gross Domestic Product (GDP)',
+            'description': 'Measures the inflation-adjusted value of all goods and services produced in the U.S. It is the primary indicator of the economy\'s health.',
+            'units': 'Billions of Chained 2017 Dollars'
+        },
+        'UNRATE': {
+            'name': 'Unemployment Rate',
+            'description': 'The percentage of the total labor force that is jobless but actively seeking employment. A key indicator of labor market health.',
+            'units': 'Percent'
+        },
+        'CPIAUCSL': {
+            'name': 'Consumer Price Index (CPI)',
+            'description': 'Measures the average change over time in the prices paid by urban consumers for a market basket of consumer goods and services. A primary measure of inflation.',
+            'units': 'Index 1982-1984=100'
+        },
+        'DFF': {
+            'name': 'Federal Funds Effective Rate',
+            'description': 'The interest rate at which depository institutions trade federal funds (balances held at Federal Reserve Banks) with each other overnight. It is the central interest rate in the U.S. financial market.',
+            'units': 'Percent'
+        },
+        'UMCSENT': {
+            'name': 'Consumer Sentiment Index',
+            'description': 'A survey-based index measuring consumer confidence in the U.S. economy. It can be a leading indicator of consumer spending.',
+            'units': 'Index 1966:Q1=100'
+        },
+        'HOUST': {
+            'name': 'Housing Starts',
+            'description': 'The number of new residential construction projects that have begun during a month. It is a key indicator of economic strength and the housing market.',
+            'units': 'Thousands of Units'
+        }
+    }
+
+    for series_id, details in indicators.items():
+        st.subheader(details['name'])
+        st.markdown(f"*{details['description']}*")
+        
+        with st.spinner(f"Fetching data for {details['name']}..."):
+            data = get_fred_series(series_id, fred)
+
+            if data is not None and not data.empty:
+                latest_value = data.iloc[0]
+                latest_date = data.index[0].strftime('%Y-%m-%d')
+                
+                st.metric(label=f"Latest Value ({latest_date})", value=f"{latest_value:,.2f} {details['units']}")
+                
+                # Plotting the data (reversing for chronological order in plot)
+                fig = px.line(data.sort_index(ascending=True), title=details['name'], template="plotly_dark")
+                fig.update_layout(xaxis_title='Date', yaxis_title=details['units'], showlegend=False)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning(f"Could not retrieve data for {details['name']}.")
+        
+        st.markdown("---")

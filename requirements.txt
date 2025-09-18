@@ -5,3 +5,5 @@ openai
 yfinance
 plotly
 pytrends
+vectorbt
+fredapi
