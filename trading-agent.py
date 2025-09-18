@@ -260,7 +260,6 @@ def get_technicals(ticker):
 def get_stock_recommendation(ticker, financials):
     """
     Uses GPT-5 to get a buy, sell, or short-sell recommendation for a stock.
-    Note: "gpt-5" is a placeholder for a future or custom model name.
     """
     try:
         response = openai.chat.completions.create(
