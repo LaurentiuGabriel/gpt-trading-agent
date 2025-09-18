@@ -117,7 +117,16 @@ This is the main interactive page. You can use natural language to ask the AI an
 
 - "get technicals {ticker}" - calculates the major technical indicators and shows them in nice graphs.
 
-- "get trends {ticker}" - uses GPT-4 to create Google searches related to the {ticker} and checks Google Trends for these queries. 
+- "get trends {ticker}" - uses GPT-4 to create Google searches related to the {ticker} and checks Google Trends for these queries.
+
+- "hedge" - Proposes a hedging strategy for your portfolio. Example output: 🛡️ Hedge Proposal: To hedge your portfolio, I recommend buying XYZ.
+Justification: Diversifies risk exposure to tech-heavy positions.
+
+- "get news {ticker}" - Fetches the latest news articles for the ticker and shows title, source, date, description and a link.
+
+- "get social sentiment {ticker}" - Fetches Reddit posts from r/wallstreetbets and r/stocks
+
+- check house and senate trades for {ticker} - Shows trades by U.S. Congress officials for the stock.
 
 ### Portfolio Performance
 This page provides a comprehensive overview of your investment activities. It includes:
@@ -129,6 +138,66 @@ This page provides a comprehensive overview of your investment activities. It in
 - Total Portfolio Value: A metric showing the total current market value of all your holdings.
 
 - Portfolio Value Over Time: An area chart visualizing the growth of your portfolio's value since your first trade.
+
+### Backtesting Engine
+
+This page allows you to test trading strategies on historical data to evaluate performance. It includes:
+
+- Strategy Simulation: Runs a Simple Moving Average (SMA) Crossover strategy:
+
+  - Buy when the 10-day moving average crosses above the 30-day moving average.
+
+  - Sell when the 10-day moving average crosses below the 30-day moving average.
+
+- User Inputs: Select a ticker symbol, date range, and initial cash amount.
+
+- Performance Metrics: After running a backtest, you’ll see key statistics such as:
+
+  - Total Return [%]
+
+  - Max Drawdown [%]
+
+  - Sharpe Ratio
+
+  - Win Rate [%]
+
+- Interactive Chart: A plot showing the buy/sell signals, equity curve, and benchmark performance.
+
+- Detailed Statistics: Expandable table with a full breakdown of backtest results.
+
+### Event Calendar
+
+This page helps you stay informed about important market events for your portfolio. It includes:
+
+- Upcoming Earnings: Displays the next earnings reports for companies in your portfolio.
+
+- Dividend Dates: Lists upcoming dividend payment dates for your holdings.
+
+- Economic Events: Shows key U.S. economic events such as FOMC meetings, CPI releases, and other macro reports.
+
+Each tab dynamically updates based on the tickers in your saved portfolio. If your portfolio is empty, the page prompts you to add stocks first.
+
+### Key Macroeconomic Indicators
+
+This page provides a dashboard of U.S. economic health using data from the FRED (Federal Reserve Economic Data) API. It includes:
+
+- Real GDP (GDPC1): Measures inflation-adjusted economic output.
+
+- Unemployment Rate (UNRATE): Tracks the percentage of jobless workers actively seeking employment.
+
+- Consumer Price Index (CPI): A primary measure of inflation in consumer goods and services.
+
+- Federal Funds Rate (DFF): The central interest rate influencing U.S. monetary policy.
+
+- Consumer Sentiment Index (UMCSENT): Gauges consumer confidence in the economy.
+
+- Housing Starts (HOUST): Indicates new residential construction activity.
+
+For each indicator, the page shows:
+
+- A latest value and date.
+
+- An interactive historical chart for trend analysis.
 
 This project is free for everyone. If you'd wish to donate, use the following button:
 [☕ Buy me a coffee via PayPal](https://paypal.me/bitheap)
