@@ -1,6 +1,7 @@
 streamlit
 pandas
 pandas-ta
+alpaca-trade-api
 dotenv
 requests
 openai
