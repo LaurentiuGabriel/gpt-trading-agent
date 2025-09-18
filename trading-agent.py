@@ -460,8 +460,25 @@ def get_stock_recommendation(ticker, financials):
         response = openai.chat.completions.create(
             model="gpt-5", 
             messages=[
-                {"role": "system", "content": "You are a financial analyst. Provide a 'BUY', 'SELL', or 'SHORT' recommendation for the given stock ticker and a brief, one-sentence justification. Start your response with one of the keywords: BUY, SELL, or SHORT."},
+                {"role": "system", "content": "You are a financial analyst. Provide a 'BUY' or 'SELL' recommendation for the given stock ticker and a brief, one-sentence justification. Start your response with one of the keywords: BUY or SELL."},
                 {"role": "user", "content": f"Should I invest in {ticker}? The financials are as follows: {financials}. Provide a recommendation."}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        st.error(f"Error getting recommendation from OpenAI: {e}")
+        return "Error"
+    
+def get_auto_stock_recommendation(ticker, financials, socials, news, government_trades):
+    """
+    Uses GPT-5 to get a buy, sell, or short-sell recommendation for a stock.
+    """
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-5", 
+            messages=[
+                {"role": "system", "content": "You are a financial analyst. Provide a 'BUY' or 'SELL' recommendation for the given stock ticker and a brief, one-sentence justification. Start your response with one of the keywords: BUY or SELL."},
+                {"role": "user", "content": f"Should I invest in {ticker}? The financials are as follows: {financials}. Here are some news about this stock: {news} and the latest posts on Reddit: {socials}. Here are also government trades related to this stock: {government_trades}. Provide a recommendation."}
             ]
         )
         return response.choices[0].message.content
@@ -844,6 +861,72 @@ if page == "Chat":
                     if rec_upper.startswith("BUY") or rec_upper.startswith("SHORT"):
                         action = "BUY" if rec_upper.startswith("BUY") else "SHORT"
                         st.session_state.actionable_recommendation = {"ticker": ticker, "action": action}
+                        
+                elif "enable auto-pilot" in prompt.lower():
+                    try:
+                        positions = alpaca_api.list_positions()
+                        current_positions = {position.symbol: float(position.qty) for position in positions}
+                        account = alpaca_api.get_account()
+                        cash_available = float(account.cash)
+                        st.info(f"Available cash: ${cash_available:,.2f}")
+                    except Exception as e:
+                        st.error(f"Error fetching positions from Alpaca: {e}")
+                        current_positions = {}
+                        cash_available = 0
+                    
+                    responses = []
+
+                    tickers = get_small_cap_stocks()
+                    if not tickers:
+                        response_content = "Sorry, I couldn't fetch any stock tickers for auto-pilot."
+                    else:
+                        for ticker in tickers:
+                            financials = get_financials(ticker)
+                            social_data = fetch_reddit_posts(ticker)
+                            news_data = fetch_news(ticker)
+                            government_trades = get_government_official_trades(ticker)
+                            recommendation = get_auto_stock_recommendation(ticker, financials, social_data.to_dict('records'), news_data.to_dict('records'), government_trades)
+                            responses.append(f"**{ticker}**: {recommendation}")
+                            
+                            rec_upper = recommendation.upper()
+                            if rec_upper.startswith("BUY"):
+                                if ticker not in current_positions or current_positions[ticker] == 0:
+                                    current_price = get_current_price(ticker)
+                    
+                                    if current_price:
+                                    # Allocate 10% of available cash to each position
+                                        position_value = cash_available * 0.1
+                                        shares_to_buy = max(1, int(position_value / current_price))
+                                        responses.append(f"Buying {shares_to_buy} shares of {ticker} at ${current_price:.2f}")
+                                        
+                                        book_trade_alpaca(
+                                            alpaca_api, 
+                                            ticker, 
+                                            shares=shares_to_buy, 
+                                            action="BUY"
+                                        )
+                                    else:
+                                        responses.append(f"Could not get current price for {ticker}, skipping buy")
+                        
+                        for ticker, quantity in current_positions.items():
+                            if quantity > 0:  
+                                financial_data = get_financials(ticker)
+                                recommendation = get_stock_recommendation(ticker, financial_data)
+                                responses.append(f"**{ticker}**: {recommendation}")
+                                
+                                rec_upper = recommendation.upper()
+                                if rec_upper.startswith("SELL"):
+
+                                    book_trade_alpaca(
+                                        alpaca_api, 
+                                        ticker, 
+                                        shares=quantity, 
+                                        action="SELL"
+                                    )
+                        
+                        response_content = "Auto-pilot analysis completed:\n\n" + "\n\n".join(responses)
+                    
+                    st.session_state.messages.append({"role": "assistant", "content": response_content})
 
                 elif "get technicals" in prompt.lower():
                     ticker = prompt.split(" ")[-1].upper()
