@@ -1,5 +1,6 @@
 streamlit
 pandas
+pandas-ta
 requests
 openai
 yfinance
