@@ -905,6 +905,7 @@ if page == "Chat":
                                             shares=shares_to_buy, 
                                             action="BUY"
                                         )
+                                        update_portfolio(ticker, "BUY", shares_to_buy, current_price)
                                     else:
                                         responses.append(f"Could not get current price for {ticker}, skipping buy")
                         
@@ -923,6 +924,7 @@ if page == "Chat":
                                         shares=quantity, 
                                         action="SELL"
                                     )
+                                    update_portfolio(ticker, "SELL", quantity, get_current_price(ticker) or 0)
                         
                         response_content = "Auto-pilot analysis completed:\n\n" + "\n\n".join(responses)
                     
