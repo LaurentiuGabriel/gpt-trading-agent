@@ -39,6 +39,141 @@ openai.api_key = OPENAI_API_KEY
 PORTFOLIO_CSV = "portfolio.csv"
 
 # --- Helper Functions ---
+def get_company_name(ticker):
+    """Gets the company's long name from its ticker using yfinance."""
+    try:
+        stock_info = yf.Ticker(ticker).info
+        return stock_info.get('longName', ticker) # Fallback to ticker if name not found
+    except Exception:
+        return ticker
+
+def get_polymarket_odds(ticker, limit=3):
+    """
+    Searches Polymarket for markets related to a specific stock ticker.
+    Uses both the ticker symbol and company name for better results.
+    """
+    try:
+        # Get company name from the ticker
+        company_name = get_company_name(ticker)
+        
+        # Create search keywords - use both ticker and company name
+        keywords = [ticker]
+        
+        # Clean company name for better searching (remove corporate suffixes)
+        if company_name and company_name != ticker:
+            clean_name = company_name
+            # Remove common corporate suffixes
+            suffixes = [' Inc.', ' Corp.', ' Corporation', ' Company', ' Ltd.', ' Limited', ' PLC', ' NV']
+            for suffix in suffixes:
+                clean_name = clean_name.split(suffix)[0]
+            keywords.append(clean_name)
+            
+            # Also try the full company name
+            keywords.append(company_name)
+        
+        # Remove duplicates
+        keywords = list(set(keywords))
+        
+        st.info(f"Searching Polymarket for: {', '.join(keywords)}")
+        
+        # Polymarket API endpoint
+        url = "https://gamma-api.polymarket.com/markets"
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json",
+            "Referer": "https://polymarket.com/"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        # Extract markets from response
+        if isinstance(data, dict) and 'markets' in data:
+            markets = data['markets']
+        elif isinstance(data, list):
+            markets = data
+        else:
+            return f"No market data found for {ticker}."
+        
+        if not markets:
+            return f"No markets data found for {ticker}."
+        
+        # Filter for ACTIVE markets with valid price data that match our keywords
+        filtered = []
+        for market in markets:
+            # Skip if not a dictionary
+            if not isinstance(market, dict):
+                continue
+                
+            # Check if market is active (not closed/resolved)
+            state = market.get('state', '').lower()
+            if state not in ['open', 'active', 'trading']:
+                continue
+                
+            # Check if market has current price data
+            outcomes = market.get('outcomes', [])
+            if not outcomes or not isinstance(outcomes, list):
+                continue
+                
+            # Check if any outcome has a valid price
+            has_valid_prices = False
+            for outcome in outcomes:
+                if isinstance(outcome, dict) and 'price' in outcome:
+                    price = outcome.get('price')
+                    if isinstance(price, (int, float)) and price > 0:
+                        has_valid_prices = True
+                        break
+            
+            if not has_valid_prices:
+                continue
+                
+            # Now check if it matches our keywords (ticker or company name)
+            question = market.get('question', '').lower()
+            title = market.get('title', '').lower()
+            description = market.get('description', '').lower()
+            market_text = f"{question} {title} {description}".lower()
+            
+            # Check if any keyword matches the market text
+            keyword_matches = any(
+                keyword.lower() in market_text 
+                for keyword in keywords
+                if keyword  # Skip empty keywords
+            )
+            
+            if keyword_matches:
+                filtered.append(market)
+        
+        if not filtered:
+            return f"No active prediction markets found for {ticker} ({company_name})."
+        
+        # Format results with current prices
+        results = []
+        for market in filtered[:limit]:
+            question = market.get('question', market.get('title', 'Unknown Market'))
+            outcomes = market.get('outcomes', [])
+            
+            outcome_prices = []
+            for outcome in outcomes:
+                if isinstance(outcome, dict):
+                    name = outcome.get('name', 'Unknown')
+                    price = outcome.get('price', 0)
+                    # Only include if we have a valid price
+                    if isinstance(price, (int, float)) and price > 0:
+                        outcome_prices.append(f"{name}: {price:.0%}")
+            
+            if outcome_prices:
+                results.append(f"'{question}' → " + " | ".join(outcome_prices))
+        
+        if not results:
+            return f"Markets found for {ticker} but no current price data available."
+        
+        return " | ".join(results)
+        
+    except Exception as e:
+        return f"Error fetching Polymarket data for {ticker}: {str(e)}"
+    
 @st.cache_data
 def get_earnings_calendar(tickers):
     """
@@ -469,7 +604,7 @@ def get_stock_recommendation(ticker, financials):
         st.error(f"Error getting recommendation from OpenAI: {e}")
         return "Error"
     
-def get_auto_stock_recommendation(ticker, financials, socials, news, government_trades):
+def get_auto_stock_recommendation(ticker, financials, socials, news, government_trades, polymarket_data):
     """
     Uses GPT-5 to get a buy, sell, or short-sell recommendation for a stock.
     """
@@ -478,7 +613,12 @@ def get_auto_stock_recommendation(ticker, financials, socials, news, government_
             model="gpt-5", 
             messages=[
                 {"role": "system", "content": "You are a financial analyst. Provide a 'BUY' or 'SELL' recommendation for the given stock ticker and a brief, one-sentence justification. Start your response with one of the keywords: BUY or SELL."},
-                {"role": "user", "content": f"Should I invest in {ticker}? The financials are as follows: {financials}. Here are some news about this stock: {news} and the latest posts on Reddit: {socials}. Here are also government trades related to this stock: {government_trades}. Provide a recommendation."}
+                # UPDATED USER PROMPT:
+                {"role": "user", "content": f"Should I invest in {ticker}? The financials are as follows: {financials}. "
+                                            f"Here are some news about this stock: {news} and the latest posts on Reddit: {socials}. "
+                                            f"Here are also government trades related to this stock: {government_trades}. "
+                                            f"Crucially, here is data from the Polymarket prediction market, which reflects crowd-sourced probabilities on future events: {polymarket_data}. "
+                                            f"Based on ALL of this information, provide a recommendation."}
             ]
         )
         return response.choices[0].message.content
@@ -881,11 +1021,18 @@ if page == "Chat":
                         response_content = "Sorry, I couldn't fetch any stock tickers for auto-pilot."
                     else:
                         for ticker in tickers:
-                            financials = get_financials(ticker)
+                            financials = {}
+                            try: 
+                                financials = get_financials(ticker)
+                            except Exception as e:
+                                financials = get_financials(ticker)
                             social_data = fetch_reddit_posts(ticker)
-                            news_data = fetch_news(ticker)
+                            news_data = fetch_news(get_company_name(ticker))
                             government_trades = get_government_official_trades(ticker)
-                            recommendation = get_auto_stock_recommendation(ticker, financials, social_data.to_dict('records'), news_data.to_dict('records'), government_trades)
+                            st.write(f"🔍 Searching Polymarket for predictions related to **{ticker}**...")
+                            polymarket_data = get_polymarket_odds(ticker)
+                            st.info(f"**Polymarket Insights:** {polymarket_data}")
+                            recommendation = get_auto_stock_recommendation(ticker, financials, social_data.to_dict('records'), news_data.to_dict('records'), government_trades, polymarket_data)
                             responses.append(f"**{ticker}**: {recommendation}")
                             
                             rec_upper = recommendation.upper()
